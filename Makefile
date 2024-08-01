@@ -317,3 +317,8 @@ help:
 
 # Phony targets
 .PHONY: build check-dependencies check-python check-npm check-docker check-poetry pull-docker-image install-python-dependencies install-frontend-dependencies install-pre-commit-hooks lint start-backend start-frontend run run-wsl setup-config setup-config-prompts help
+
+custom-sandbox:
+	@echo "$(YELLOW)Building Custom Sandbox Docker image...$(RESET)"
+	@docker build --file custom_sandbox_with_node.DockerFile -t custom_image .
+	@echo "$(GREEN)Docker image built successfully.$(RESET)"
