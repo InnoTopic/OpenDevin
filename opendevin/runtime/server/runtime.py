@@ -28,7 +28,6 @@ from opendevin.runtime.browser.browser_env import BrowserEnv
 from opendevin.runtime.plugins import JupyterRequirement, PluginRequirement
 from opendevin.runtime.runtime import Runtime
 from opendevin.runtime.tools import RuntimeTool
-from opendevin.storage.local import LocalFileStore
 
 from ..browser import browse
 from .files import read_file, write_file
@@ -44,7 +43,6 @@ class ServerRuntime(Runtime):
         sandbox: Sandbox | None = None,
     ):
         super().__init__(config, event_stream, sid, plugins)
-        self.file_store = LocalFileStore(config.workspace_base)
         if sandbox is None:
             self.sandbox = self.create_sandbox(sid, config.sandbox.box_type)
             self._is_external_sandbox = False
@@ -52,6 +50,7 @@ class ServerRuntime(Runtime):
             self.sandbox = sandbox
             self._is_external_sandbox = True
         self.browser: BrowserEnv | None = None
+        logger.debug(f'ServerRuntime `{sid}` config:\n{self.config}')
 
     def create_sandbox(self, sid: str = 'default', box_type: str = 'ssh') -> Sandbox:
         if box_type == 'local':
@@ -107,7 +106,6 @@ class ServerRuntime(Runtime):
         self,
         runtime_tools: list[RuntimeTool],
         runtime_tools_config: Optional[dict[RuntimeTool, Any]] = None,
-        is_async: bool = True,
     ) -> None:
         # if browser in runtime_tools, init it
         if RuntimeTool.BROWSER in runtime_tools:
@@ -115,11 +113,14 @@ class ServerRuntime(Runtime):
                 runtime_tools_config = {}
             browser_env_config = runtime_tools_config.get(RuntimeTool.BROWSER, {})
             try:
-                self.browser = BrowserEnv(is_async=is_async, **browser_env_config)
+                self.browser = BrowserEnv(**browser_env_config)
             except BrowserInitException:
                 logger.warn(
                     'Failed to start browser environment, web browsing functionality will not work'
                 )
+
+    async def copy_to(self, host_src: str, sandbox_dest: str, recursive: bool = False):
+        self.sandbox.copy_to(host_src, sandbox_dest, recursive)
 
     async def run(self, action: CmdRunAction) -> Observation:
         return self._run_command(action.command)
@@ -184,7 +185,6 @@ class ServerRuntime(Runtime):
         return IPythonRunCellObservation(content=output, code=action.code)
 
     async def read(self, action: FileReadAction) -> Observation:
-        # TODO: use self.file_store
         working_dir = self.sandbox.get_working_directory()
         return await read_file(
             action.path,
@@ -196,7 +196,6 @@ class ServerRuntime(Runtime):
         )
 
     async def write(self, action: FileWriteAction) -> Observation:
-        # TODO: use self.file_store
         working_dir = self.sandbox.get_working_directory()
         return await write_file(
             action.path,

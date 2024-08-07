@@ -111,6 +111,12 @@ class LLMConfig:
                 ret[k] = '******' if v else None
         return ret
 
+    def set_missing_attributes(self):
+        """Set any missing attributes to their default values."""
+        for field_name, field_obj in self.__dataclass_fields__.items():
+            if not hasattr(self, field_name):
+                setattr(self, field_name, field_obj.default)
+
 
 @dataclass
 class AgentConfig:
@@ -146,8 +152,17 @@ class SandboxConfig(metaclass=Singleton):
         enable_auto_lint: Whether to enable auto-lint.
         use_host_network: Whether to use the host network.
         initialize_plugins: Whether to initialize plugins.
-        update_source_code: Whether to update the source code in the EventStreamRuntime.
-            Used for development of EventStreamRuntime.
+        od_runtime_extra_deps: The extra dependencies to install in the runtime image (typically used for evaluation).
+            This will be rendered into the end of the Dockerfile that builds the runtime image.
+            It can contain any valid shell commands (e.g., pip install numpy).
+            The path to the interpreter is available as $OD_INTERPRETER_PATH,
+            which can be used to install dependencies for the OD-specific Python interpreter.
+        od_runtime_startup_env_vars: The environment variables to set at the launch of the runtime.
+            This is a dictionary of key-value pairs.
+            This is useful for setting environment variables that are needed by the runtime.
+            For example, for specifying the base url of website for browsergym evaluation.
+        browsergym_eval_env: The BrowserGym environment to use for evaluation.
+            Default is None for general purpose browsing. Check evaluation/miniwob and evaluation/webarena for examples.
     """
 
     box_type: str = 'ssh'
@@ -163,7 +178,9 @@ class SandboxConfig(metaclass=Singleton):
     )
     use_host_network: bool = False
     initialize_plugins: bool = True
-    update_source_code: bool = False
+    od_runtime_extra_deps: str | None = None
+    od_runtime_startup_env_vars: dict[str, str] = field(default_factory=dict)
+    browsergym_eval_env: str | None = None
 
     def defaults_to_dict(self) -> dict:
         """Serialize fields to a dict for the frontend, including type hints, defaults, and whether it's optional."""
@@ -227,10 +244,11 @@ class AppConfig(metaclass=Singleton):
     runtime: str = 'server'
     file_store: str = 'memory'
     file_store_path: str = '/tmp/file_store'
+    # TODO: clean up workspace path after the removal of ServerRuntime
     workspace_base: str = os.path.join(os.getcwd(), 'workspace')
-    workspace_mount_path: str = (
+    workspace_mount_path: str | None = (
         UndefinedString.UNDEFINED  # this path should always be set when config is fully loaded
-    )
+    )  # when set to None, do not mount the workspace
     workspace_mount_path_in_sandbox: str = '/workspace'
     workspace_mount_rewrite: str | None = None
     cache_dir: str = '/tmp/cache'
@@ -390,6 +408,11 @@ def load_from_env(cfg: AppConfig, env_or_toml_dict: dict | MutableMapping[str, s
             elif env_var_name in env_or_toml_dict:
                 # convert the env var to the correct type and set it
                 value = env_or_toml_dict[env_var_name]
+
+                # skip empty config values (fall back to default)
+                if not value:
+                    continue
+
                 try:
                     # if it's an optional type, get the non-None type
                     if get_origin(field_type) is UnionType:
@@ -529,7 +552,7 @@ def finalize_config(cfg: AppConfig):
     cfg.workspace_base = os.path.abspath(cfg.workspace_base)
 
     # In local there is no sandbox, the workspace will have the same pwd as the host
-    if cfg.sandbox.box_type == 'local':
+    if cfg.sandbox.box_type == 'local' and cfg.workspace_mount_path is not None:
         cfg.workspace_mount_path_in_sandbox = cfg.workspace_mount_path
 
     if cfg.workspace_mount_rewrite:  # and not config.workspace_mount_path:
